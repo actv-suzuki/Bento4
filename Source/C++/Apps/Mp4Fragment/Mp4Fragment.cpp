@@ -1058,11 +1058,99 @@ IsIFrame(AP4_Sample& sample, AP4_AvcSampleDescription* avc_desc) {
 }
 
 /*----------------------------------------------------------------------
+|   IsIFrame Hevc
++---------------------------------------------------------------------*/
+static bool
+IsIFrameHevc(AP4_Sample& sample, AP4_HevcSampleDescription* hevc_desc) {
+	AP4_DataBuffer sample_data;
+	if (AP4_FAILED(sample.ReadData(sample_data))) {
+		return false;
+	}
+
+	//printf("------------------------");
+	const unsigned char* data = sample_data.GetData();
+	AP4_Size             size = sample_data.GetDataSize();
+	printf("size: %d \n", size);
+
+	while (size >= hevc_desc->GetNaluLengthSize()) {
+		unsigned int nalu_length = 0;
+		if (hevc_desc->GetNaluLengthSize() == 1) {
+			nalu_length = *data++;
+			--size;
+		}
+		else if (hevc_desc->GetNaluLengthSize() == 2) {
+			nalu_length = AP4_BytesToUInt16BE(data);
+			data += 2;
+			size -= 2;
+		}
+		else if (hevc_desc->GetNaluLengthSize() == 4) {
+			nalu_length = AP4_BytesToUInt32BE(data);
+			data += 4;
+			size -= 4;
+		}
+		else {
+			return false;
+		}
+		if (nalu_length <= size) {
+			size -= nalu_length;
+		}
+		else {
+			size = 0;
+		}
+		printf("nalu_length: %d / ", nalu_length);
+		printf("data: %d / ", (*data & 0x1F));
+		printf("size: %d \n", size);
+
+		switch (*data & 0x1F) {
+		case 0: {
+			AP4_BitStream bits;
+			bits.WriteBytes(data + 1, 8);
+			ReadGolomb(bits);
+			unsigned int slice_type = ReadGolomb(bits);
+			printf("slice_type(?): %d \n", slice_type);
+			if (slice_type == 110) {
+				printf("it's looks like i-frame, may be. \n");
+		//		//for actvila experiment
+				return true;
+			}
+			//else {
+			//	return false;
+			//}
+			break;
+		}
+
+		case 4: {
+			printf("mmm it's looks like i-frame, may be. \n");
+			return true;
+			//break;
+		}
+
+		}
+		data += nalu_length;
+	}
+
+	return false;
+}
+
+/*----------------------------------------------------------------------
 |   main
 +---------------------------------------------------------------------*/
 int
 main(int argc, char** argv)
 {
+
+	int i;
+
+	printf("number of all arguments : %d\n", argc);
+	for (i = 0; i < argc; i++) {
+		printf("%d : %s\n", i, argv[i]);
+	}
+
+	fprintf(stdout,
+		"\nHELLO MY FIRST C++ WORLD WITH REMOTE BUILD!!! 1 \n\n"
+	);
+		
+
     if (argc < 2) {
         PrintUsageAndExit();
     }
@@ -1312,7 +1400,8 @@ main(int argc, char** argv)
         fprintf(stderr, "ERROR: no audio, video, or subtitles track in the file\n");
         return 1;
     }
-    AP4_AvcSampleDescription* avc_desc = NULL;
+	AP4_AvcSampleDescription* avc_desc = NULL;
+	AP4_HevcSampleDescription* hevc_desc = NULL;
     if (video_track && (Options.force_i_frame_sync != AP4_FRAGMENTER_FORCE_SYNC_MODE_NONE)) {
         // that feature is only supported for AVC
         AP4_SampleDescription* sdesc = video_track->m_Track->GetSampleDescription(0);
@@ -1320,8 +1409,9 @@ main(int argc, char** argv)
             avc_desc = AP4_DYNAMIC_CAST(AP4_AvcSampleDescription, sdesc);
         }
         if (avc_desc == NULL) {
-            fprintf(stderr, "--force-i-frame-sync can only be used with AVC/H.264 video\n");
-            return 1;
+            fprintf(stderr, "--force-i-frame-sync can only be used with AVC/H.264 video\n But ill try.");
+			hevc_desc = AP4_DYNAMIC_CAST(AP4_HevcSampleDescription, sdesc);
+			// return 1;
         }
     }
     
@@ -1367,11 +1457,21 @@ main(int argc, char** argv)
             }
         }
         if (Options.force_i_frame_sync != AP4_FRAGMENTER_FORCE_SYNC_MODE_NONE) {
+			if (hevc_desc != NULL) {
+				printf("ok, forcing i-frame sync flags.(btw THIS IS HEVC...right?) \n");
+			}
             for (unsigned int i=0; i<video_track->m_Samples->GetSampleCount(); i++) {
                 if (AP4_SUCCEEDED(video_track->m_Samples->GetSample(i, sample))) {
-                    if (IsIFrame(sample, avc_desc)) {
+                    if (avc_desc != NULL && IsIFrame(sample, avc_desc)) {
                         video_track->m_Samples->ForceSync(i);
-                    }
+					}
+					else if (hevc_desc != NULL){
+						printf("------------------------\n");
+						printf("Sample No: %d \n", i + 1);
+						if (IsIFrameHevc(sample, hevc_desc)) {
+							video_track->m_Samples->ForceSync(i);
+						}
+					}
                 }
             }
         }
