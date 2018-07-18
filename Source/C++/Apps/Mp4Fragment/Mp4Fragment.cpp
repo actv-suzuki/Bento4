@@ -37,7 +37,7 @@
 /*----------------------------------------------------------------------
 |   constants
 +---------------------------------------------------------------------*/
-#define BANNER "MP4 Fragmenter - Version 1.6.0\n"\
+#define BANNER "MP4 Fragmenter - Version 1.6.0 for acTVila \n"\
                "(Bento4 Version " AP4_VERSION_STRING ")\n"\
                "(c) 2002-2015 Axiomatic Systems, LLC"
 
@@ -1034,20 +1034,20 @@ IsIFrame(AP4_Sample& sample, AP4_AvcSampleDescription* avc_desc) {
             size = 0;
         }
         
-        switch (*data & 0x1F) {
+        switch (*data & 0x1F) { // nal_unit_type
             case 1: {
                 AP4_BitStream bits;
                 bits.WriteBytes(data+1, 8);
                 ReadGolomb(bits);
                 unsigned int slice_type = ReadGolomb(bits);
                 if (slice_type == 2 || slice_type == 7) {
-                    return true;
+                    return true;// see Table 7-6 - Name association to slice_type
                 } else {
                     return false; // only show first slice type
                 }
             }
             
-            case 5: 
+            case 5: //nal_unit_type is equal to 5 (IDR picture),
                 return true;
         }
         
@@ -1058,20 +1058,23 @@ IsIFrame(AP4_Sample& sample, AP4_AvcSampleDescription* avc_desc) {
 }
 
 /*----------------------------------------------------------------------
-|   IsIFrame Hevc
+|   IsIFrame for Hevc
 +---------------------------------------------------------------------*/
 static bool
-IsIFrameHevc(AP4_Sample& sample, AP4_HevcSampleDescription* hevc_desc) {
+IsIFrame(AP4_Sample& sample, AP4_HevcSampleDescription* hevc_desc) {
 	AP4_DataBuffer sample_data;
 	if (AP4_FAILED(sample.ReadData(sample_data))) {
 		return false;
 	}
 
-	//printf("------------------------");
 	const unsigned char* data = sample_data.GetData();
 	AP4_Size             size = sample_data.GetDataSize();
-	printf("size: %d \n", size);
+	unsigned int num_extra_slice_header_bits = NULL;
+	unsigned int dependent_slice_segments_enabled_flag = NULL;
 
+	if (Options.debug) {
+		printf("size: %d \n", size);
+	}
 	while (size >= hevc_desc->GetNaluLengthSize()) {
 		unsigned int nalu_length = 0;
 		if (hevc_desc->GetNaluLengthSize() == 1) {
@@ -1097,35 +1100,96 @@ IsIFrameHevc(AP4_Sample& sample, AP4_HevcSampleDescription* hevc_desc) {
 		else {
 			size = 0;
 		}
-		printf("nalu_length: %d / ", nalu_length);
-		printf("data: %d / ", (*data & 0x1F));
-		printf("size: %d \n", size);
 
-		switch (*data & 0x1F) {
-		case 0: {
-			AP4_BitStream bits;
-			bits.WriteBytes(data + 1, 8);
-			ReadGolomb(bits);
-			unsigned int slice_type = ReadGolomb(bits);
-			printf("slice_type(?): %d \n", slice_type);
-			if (slice_type == 110) {
-				printf("it's looks like i-frame, may be. \n");
-		//		//for actvila experiment
+		//see Table 7-1 NAL unit type codes and NAL unit type classes
+		AP4_BitStream nal_unit_header;
+		nal_unit_header.WriteBytes(data, 16);
+
+		nal_unit_header.SkipBit();// forbidden_zero_bit
+		unsigned int nal_unit_type = nal_unit_header.ReadBits(6);
+
+		if (Options.debug) {
+			printf("nalu_length: %d / ", nalu_length);
+			printf("nal_unit_type: %d  ... ", nal_unit_type);
+			printf("data: %d : %x : %d \n ", *data, *data, (*data & 0x3F));
+		}
+
+		if (nal_unit_type == 34) { // PPS_NUT
+
+			AP4_BitStream pic_parameter_set_rbsp;
+			pic_parameter_set_rbsp.WriteBytes(data + 2, 16);
+
+			//pps_pic_parameter_set_id ue(v)
+			ReadGolomb(pic_parameter_set_rbsp);
+			//pps_seq_parameter_set_id ue(v)
+			ReadGolomb(pic_parameter_set_rbsp);
+			//dependent_slice_segments_enabled_flag u(1)
+			dependent_slice_segments_enabled_flag = pic_parameter_set_rbsp.ReadBit();
+			//output_flag_present_flag u(1)
+			pic_parameter_set_rbsp.SkipBit();
+			//num_extra_slice_header_bits u(3)
+			num_extra_slice_header_bits = pic_parameter_set_rbsp.ReadBits(3);
+
+		}
+		else if (nal_unit_type <= 9 && num_extra_slice_header_bits <= 2) { // slice_segment_layer_rbsp()
+
+			AP4_BitStream slice_segment_header;
+			slice_segment_header.WriteBytes(data + 2, 32);
+
+			//first_slice_segment_in_pic_flag u(1)
+			unsigned int first_slice_segment_in_pic_flag = slice_segment_header.ReadBit();
+
+			//slice_pic_parameter_set_id ue(v)
+			ReadGolomb(slice_segment_header);
+
+			unsigned int dependent_slice_segment_flag = 0;
+			if (!first_slice_segment_in_pic_flag) {
+				if (dependent_slice_segments_enabled_flag) {
+					// dependent_slice_segment_flag	u(1)
+					dependent_slice_segment_flag = slice_segment_header.ReadBit();
+				}
+				// slice_segment_address u(v)
+				slice_segment_header.SkipBits(8);
+			}
+			if (!dependent_slice_segment_flag) {
+				for (unsigned int i = 0; i < num_extra_slice_header_bits; i++) {
+					// slice_reserved_flag[i] u(1)
+					slice_segment_header.SkipBit();
+				}
+				// slice_type ue(v)
+				unsigned int slice_type = ReadGolomb(slice_segment_header);
+				printf("slice_type: %d \n ", slice_type);
+				if (slice_type == 2) {
+					printf("this is I-Slice. \n");
+					return true;
+				}
+			}
+		}
+		else if (nal_unit_type == 35) {// AUD_NUT
+
+			AP4_BitStream access_unit_delimiter_rbsp;
+			access_unit_delimiter_rbsp.WriteBytes(data + 2, 8);
+
+			if (access_unit_delimiter_rbsp.ReadBits(3) == 0) {
+				printf("this is I-Picture. \n");
 				return true;
 			}
-			//else {
-			//	return false;
-			//}
-			break;
 		}
-
-		case 4: {
-			printf("mmm it's looks like i-frame, may be. \n");
+		else if(
+			nal_unit_type == 16 ||
+			nal_unit_type == 17 ||
+			nal_unit_type == 18 ||
+			nal_unit_type == 19 ||
+			nal_unit_type == 20 ||
+			nal_unit_type == 21 ||
+			nal_unit_type == 22 ||
+			nal_unit_type == 23
+		){
+			// range of BLA_W_LP to RSV_IRAP_VCL23. slice_type shall be equal to 2.(I slice)
+			printf("this is I-Slice. \n");
 			return true;
-			//break;
 		}
 
-		}
 		data += nalu_length;
 	}
 
@@ -1138,20 +1202,8 @@ IsIFrameHevc(AP4_Sample& sample, AP4_HevcSampleDescription* hevc_desc) {
 int
 main(int argc, char** argv)
 {
-
-	int i;
-
-	printf("number of all arguments : %d\n", argc);
-	for (i = 0; i < argc; i++) {
-		printf("%d : %s\n", i, argv[i]);
-	}
-
-	fprintf(stdout,
-		"\nHELLO MY FIRST C++ WORLD WITH REMOTE BUILD!!! 1 \n\n"
-	);
-		
-
-    if (argc < 2) {
+	
+	if (argc < 2) {
         PrintUsageAndExit();
     }
 
@@ -1409,7 +1461,7 @@ main(int argc, char** argv)
             avc_desc = AP4_DYNAMIC_CAST(AP4_AvcSampleDescription, sdesc);
         }
         if (avc_desc == NULL) {
-            fprintf(stderr, "--force-i-frame-sync can only be used with AVC/H.264 video\n But ill try.");
+            fprintf(stderr, "--force-i-frame-sync can only be used with AVC/H.264 video\n But i'll try.\n");
 			hevc_desc = AP4_DYNAMIC_CAST(AP4_HevcSampleDescription, sdesc);
 			// return 1;
         }
@@ -1457,18 +1509,17 @@ main(int argc, char** argv)
             }
         }
         if (Options.force_i_frame_sync != AP4_FRAGMENTER_FORCE_SYNC_MODE_NONE) {
-			if (hevc_desc != NULL) {
-				printf("ok, forcing i-frame sync flags.(btw THIS IS HEVC...right?) \n");
-			}
             for (unsigned int i=0; i<video_track->m_Samples->GetSampleCount(); i++) {
                 if (AP4_SUCCEEDED(video_track->m_Samples->GetSample(i, sample))) {
                     if (avc_desc != NULL && IsIFrame(sample, avc_desc)) {
                         video_track->m_Samples->ForceSync(i);
 					}
 					else if (hevc_desc != NULL){
-						printf("------------------------\n");
-						printf("Sample No: %d \n", i + 1);
-						if (IsIFrameHevc(sample, hevc_desc)) {
+						if (Options.debug) {
+							printf("------------------------\n");
+							printf("Sample No: %d \n", i + 1);
+						}
+						if (IsIFrame(sample, hevc_desc)) {
 							video_track->m_Samples->ForceSync(i);
 						}
 					}
