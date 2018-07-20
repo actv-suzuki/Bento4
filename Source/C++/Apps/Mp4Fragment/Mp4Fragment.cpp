@@ -1069,6 +1069,7 @@ IsIFrame(AP4_Sample& sample, AP4_HevcSampleDescription* hevc_desc) {
 
 	const unsigned char* data = sample_data.GetData();
 	AP4_Size             size = sample_data.GetDataSize();
+	unsigned int num_extra_slice_header_bits = NULL;
 
 	while (size >= hevc_desc->GetNaluLengthSize()) {
 		unsigned int nalu_length = 0;
@@ -1097,29 +1098,49 @@ IsIFrame(AP4_Sample& sample, AP4_HevcSampleDescription* hevc_desc) {
 		}
 
 		AP4_BitStream nal_unit_header;
-		nal_unit_header.WriteBytes(data, 16);
-
-		nal_unit_header.SkipBit();// forbidden_zero_bit
+		nal_unit_header.WriteBytes(data, 8);
+		nal_unit_header.SkipBit();
 		unsigned int nal_unit_type = nal_unit_header.ReadBits(6);
 
-		if (nal_unit_type == 35) {
+		if (nal_unit_type <= 9) {
+			// slice_segment_layer_rbsp
+			AP4_BitStream bit;
+			bit.WriteBytes(data + 2, 8);
+
+			// first_slice_segment_in_pic_flag
+			if (bit.ReadBit() == 0) {
+				// This format is not supported.
+				return false;
+			}
+			ReadGolomb(bit);
+
+			for (unsigned int i = 0; i < num_extra_slice_header_bits; i++) {
+				bit.SkipBit();
+			}
+			// slice_type 
+			if (ReadGolomb(bit) == 2) {
+				return true;
+			}
+		} else if (16 <= nal_unit_type && nal_unit_type <= 23) {
+			// unit_type has a value in the range of BLA_W_LP to RSV_IRAP_VCL23
+			// slice_type shall be equal to 2.
+			return true;
+		} else if (nal_unit_type == 34) {
+			// Picture parameter set
+			AP4_BitStream bit;
+			bit.WriteBytes(data + 2, 8);
+			ReadGolomb(bit);
+			ReadGolomb(bit);
+			bit.SkipBits(2);
+			num_extra_slice_header_bits = bit.ReadBits(3);
+		} else if (nal_unit_type == 35) {
+			// Access unit delimiter
 			AP4_BitStream bits;
 			bits.WriteBytes(data + 2, 8);
-
+			// pic_type
 			if (bits.ReadBits(3) == 0) {
 				return true;
 			}
-		} else if(
-			nal_unit_type == 16 ||
-			nal_unit_type == 17 ||
-			nal_unit_type == 18 ||
-			nal_unit_type == 19 ||
-			nal_unit_type == 20 ||
-			nal_unit_type == 21 ||
-			nal_unit_type == 22 ||
-			nal_unit_type == 23
-		){
-			return true;
 		}
 
 		data += nalu_length;
