@@ -1113,16 +1113,13 @@ IsIFrame(AP4_Sample& sample, AP4_HevcSampleDescription* hevc_desc) {
 				return false;
 			}
 			ReadGolomb(bit);
-
-			for (unsigned int i = 0; i < num_extra_slice_header_bits; i++) {
-				bit.SkipBit();
-			}
+			bit.SkipBits(num_extra_slice_header_bits);
 			// slice_type 
 			if (ReadGolomb(bit) == 2) {
 				return true;
 			}
 		} else if (16 <= nal_unit_type && nal_unit_type <= 23) {
-			// unit_type has a value in the range of BLA_W_LP to RSV_IRAP_VCL23
+			// When nal_unit_type has a value in the range of BLA_W_LP to RSV_IRAP_VCL23
 			// slice_type shall be equal to 2.
 			return true;
 		} else if (nal_unit_type == 34) {
