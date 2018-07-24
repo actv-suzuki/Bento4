@@ -32,7 +32,7 @@ def GetModule(name):
 def GetIncludeDirs(modules, exclude=None):
     dirs = []
     for module in Split(modules):
-        if module in Modules and not module == exclude:
+        if Modules.has_key(module) and not module == exclude:
             dirs += Modules[module].GetIncludeDirs()
         else:
             dirs += [GetDirPath(module)]
@@ -80,7 +80,7 @@ class LibraryModule(Module):
             sources += GlobSources(dir, build_source_pattern)
 
         # add cherry-picked files
-        for drct in list(build_source_files.keys()):
+        for drct in build_source_files.keys():
             pattern = build_source_files[drct]
             drct_path = 'C++/'+drct
             DeclareBuildDir(drct_path)
@@ -146,7 +146,7 @@ env['AP4_SYSTEM_SOURCES'] = {'System/StdC':['*.cpp'], 'System/Posix':['*.cpp']}
 target_config_file = env.GetBuildPath('#/Build/Targets/'+env['target']+'/Config.scons')
 if os.path.exists(target_config_file):
     # Load the target-specific config file
-    exec(compile(open(target_config_file).read(), target_config_file, 'exec'))
+    execfile(target_config_file)
 
 #######################################################
 # modules
