@@ -37,7 +37,7 @@
 /*----------------------------------------------------------------------
 |   constants
 +---------------------------------------------------------------------*/
-#define BANNER "MP4 Fragmenter - Version 1.6.0 for acTVila \n"\
+#define BANNER "MP4 Fragmenter - Version 1.6.0\n"\
                "(Bento4 Version " AP4_VERSION_STRING ")\n"\
                "(c) 2002-2015 Axiomatic Systems, LLC"
 
@@ -1047,7 +1047,7 @@ IsIFrame(AP4_Sample& sample, AP4_AvcSampleDescription* avc_desc) {
                 }
             }
             
-            case 5:
+            case 5: 
                 return true;
         }
         
@@ -1134,7 +1134,6 @@ IsIFrame(AP4_Sample& sample, AP4_HevcSampleDescription* hevc_desc) {
 int
 main(int argc, char** argv)
 {
-	
 	if (argc < 2) {
         PrintUsageAndExit();
     }
