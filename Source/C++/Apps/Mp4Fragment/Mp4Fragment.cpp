@@ -1069,7 +1069,10 @@ IsIFrame(AP4_Sample& sample, AP4_HevcSampleDescription* hevc_desc) {
 
 	const unsigned char* data = sample_data.GetData();
 	AP4_Size             size = sample_data.GetDataSize();
-	unsigned int num_extra_slice_header_bits = NULL;
+	unsigned int num_extra_slice_header_bits = 0;
+
+	AP4_HevcFrameParser* m_HevcParser = new AP4_HevcFrameParser();
+	AP4_HevcFrameParser::AccessUnitInfo access_unit_info;
 
 	while (size >= hevc_desc->GetNaluLengthSize()) {
 		unsigned int nalu_length = 0;
@@ -1097,47 +1100,27 @@ IsIFrame(AP4_Sample& sample, AP4_HevcSampleDescription* hevc_desc) {
 			size = 0;
 		}
 
-		AP4_BitStream nal_unit_header;
-		nal_unit_header.WriteBytes(data, 8);
-		nal_unit_header.SkipBit();
-		unsigned int nal_unit_type = nal_unit_header.ReadBits(6);
+		unsigned int nal_unit_type = (*data >> 1) & 0x3F;
 
 		if (nal_unit_type <= 9) {
-			// slice_segment_layer_rbsp
-			AP4_BitStream bit;
-			bit.WriteBytes(data + 2, 8);
-
-			// first_slice_segment_in_pic_flag
-			if (bit.ReadBit() == 0) {
-				// This format is not supported.
-				return false;
-			}
-			ReadGolomb(bit);
-			bit.SkipBits(num_extra_slice_header_bits);
-			// slice_type 
-			if (ReadGolomb(bit) == 2) {
-				return true;
-			}
+			AP4_HevcSliceSegmentHeader slice_header;
+			AP4_Result result = m_HevcParser->ParseSliceSegmentHeader(data + 2, nalu_length, nal_unit_type, slice_header);
+			if (AP4_FAILED(result)) return false;
+			return slice_header.slice_type == 2;
 		} else if (16 <= nal_unit_type && nal_unit_type <= 23) {
 			// When nal_unit_type has a value in the range of BLA_W_LP to RSV_IRAP_VCL23
 			// slice_type shall be equal to 2.
 			return true;
-		} else if (nal_unit_type == 34) {
-			// Picture parameter set
-			AP4_BitStream bit;
-			bit.WriteBytes(data + 2, 8);
-			ReadGolomb(bit);
-			ReadGolomb(bit);
-			bit.SkipBits(2);
-			num_extra_slice_header_bits = bit.ReadBits(3);
+		} else if (32 <= nal_unit_type && nal_unit_type <= 34) {
+			// VPS_NUT, SPS_NUT, PPS_NUT
+			AP4_Result result = m_HevcParser->Feed(data, nalu_length, access_unit_info);
+			if (AP4_FAILED(result)) return false;
 		} else if (nal_unit_type == 35) {
 			// Access unit delimiter
 			AP4_BitStream bits;
 			bits.WriteBytes(data + 2, 8);
 			// pic_type
-			if (bits.ReadBits(3) == 0) {
-				return true;
-			}
+			return bits.ReadBits(3) == 0;
 		}
 
 		data += nalu_length;
