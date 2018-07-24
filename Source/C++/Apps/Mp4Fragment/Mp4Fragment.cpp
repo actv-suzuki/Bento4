@@ -1069,7 +1069,6 @@ IsIFrame(AP4_Sample& sample, AP4_HevcSampleDescription* hevc_desc) {
 
 	const unsigned char* data = sample_data.GetData();
 	AP4_Size             size = sample_data.GetDataSize();
-	unsigned int num_extra_slice_header_bits = 0;
 
 	AP4_HevcFrameParser* m_HevcParser = new AP4_HevcFrameParser();
 	AP4_HevcFrameParser::AccessUnitInfo access_unit_info;
